@@ -9,10 +9,7 @@ import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
-import java.util.IntSummaryStatistics;
-import java.util.List;
-import java.util.Optional;
-import java.util.OptionalInt;
+import java.util.*;
 import java.util.concurrent.CompletableFuture;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
@@ -46,11 +43,26 @@ public class TraceDataService implements Runnable {
                 CompletableFuture<HttpResponse<Stream<String>>> future = client.sendAsync(request, bodyHandler);
                 future.thenApply(HttpResponse::body).whenComplete((inputStream, ex) -> {
 
-                    //id length ?
-                    System.out.println("id metric");
-                    IntSummaryStatistics summaryStatistics = inputStream.mapToInt(trace -> trace.indexOf("|"))
-                            .summaryStatistics();
-                    System.out.println(summaryStatistics);
+                    //id length = min=12, average=15.863911, max=16
+//                    System.out.println("id metric");
+//                    IntSummaryStatistics summaryStatistics = inputStream.mapToInt(trace -> trace.indexOf("|"))
+//                            .summaryStatistics();
+//                    System.out.println(summaryStatistics);
+
+                    // error log
+                    //error=1 | http.status_code=xxx - 3,  needle string len is 4
+                    long badTraceStartTime = System.nanoTime();
+                    Set<String> badTraceSet = inputStream.filter(line -> {
+                        int len = line.length();
+                        //error=1 | http.status_code=xxx - 3,  needle string len is 4
+                        String endFlag = line.substring(len - 7, len - 3);
+                        return endFlag.equals("erro") || endFlag.equals("ode=");
+                    }).map(line -> line.substring(0, 16)).collect(Collectors.toSet());
+                    long badTraceEndTime = System.nanoTime();
+                    System.out.println("get bad time:" + (badTraceEndTime - badTraceStartTime));
+                    System.out.println("sta time:" + (badTraceEndTime - startTime));
+                    System.out.println("bad traceIds");
+
                     // error=1 start ?
 //                    String errorFlag = new StringBuffer("error=1").reverse().toString();
 //                    String httpNomarl = new StringBuffer("http.status_code=200").reverse().toString();
