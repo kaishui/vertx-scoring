@@ -1,0 +1,105 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  ~ Copyright 2017 Red Hat, Inc.
+  ~
+  ~ Red Hat licenses this file to you under the Apache License, version 2.0
+  ~ (the "License"); you may not use this file except in compliance with the
+  ~ License.  You may obtain a copy of the License at:
+  ~
+  ~ http://www.apache.org/licenses/LICENSE-2.0
+  ~
+  ~ Unless required by applicable law or agreed to in writing, software
+  ~ distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
+  ~ WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.  See the
+  ~ License for the specific language governing permissions and limitations
+  ~ under the License.
+  -->
+
+<hazelcast xmlns="http://www.hazelcast.com/schema/config"
+           xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+           xsi:schemaLocation="http://www.hazelcast.com/schema/config
+           http://www.hazelcast.com/schema/config/hazelcast-config-4.0.xsd">
+
+    <properties>
+<!--        <property name="hazelcast.wait.seconds.before.join">0</property>-->
+<!--        <property name="hazelcast.local.localAddress">127.0.0.1</property>-->
+<!--        <property name="hazelcast.discovery.enabled">true</property>-->
+
+    </properties>
+
+    <network>
+
+        <join>
+            <multicast enabled="true">
+                <multicast-group>224.2.2.3</multicast-group>
+                <multicast-port>54327</multicast-port>
+            </multicast>
+            <tcp-ip enabled="false">
+                <member-list>
+                    <member>localhost</member>
+                    <member>192.168.31.198</member>
+                </member-list>
+            </tcp-ip>
+            <discovery-strategies>
+                <discovery-strategy class="com.hazelcast.spi.discovery.multicast.MulticastDiscoveryStrategy" enabled="false">
+                    <properties>
+                        <property name="group">224.2.2.3</property>
+                        <property name="port">54327</property>
+                    </properties>
+                </discovery-strategy>
+            </discovery-strategies>
+        </join>
+    </network>
+
+    <multimap name="__vertx.subs">
+        <backup-count>0</backup-count>
+        <value-collection-type>SET</value-collection-type>
+    </multimap>
+
+    <map name="errorMap">
+        <backup-count>0</backup-count>
+        <async-backup-count>0</async-backup-count>
+    </map>
+    <multimap name="all">
+        <backup-count>0</backup-count>
+        <async-backup-count>0</async-backup-count>
+        <value-collection-type>SET</value-collection-type>
+        <split-brain-protection-ref>split-brain-protection-name</split-brain-protection-ref>
+    </multimap>
+
+    <topic name="finishTopic">
+        <global-ordering-enabled>true</global-ordering-enabled>
+        <statistics-enabled>true</statistics-enabled>
+        <message-listeners>
+            <message-listener>MessageListenerImpl</message-listener>
+        </message-listeners>
+    </topic>
+    <queue name="queue">
+        <max-size>40000</max-size>
+    </queue>
+    <map name="__vertx.haInfo">
+        <backup-count>0</backup-count>
+    </map>
+
+    <set name="badTraceIds">
+        <statistics-enabled>false</statistics-enabled>
+        <backup-count>0</backup-count>
+        <async-backup-count>0</async-backup-count>
+        <split-brain-protection-ref>splitbrainprotection-name</split-brain-protection-ref>
+    </set>
+    <map name="__vertx.nodeInfo">
+        <backup-count>0</backup-count>
+    </map>
+
+    <cp-subsystem>
+        <cp-member-count>0</cp-member-count>
+        <semaphores>
+            <semaphore>
+                <name>__vertx.*</name>
+                <jdk-compatible>false</jdk-compatible>
+                <initial-permits>1</initial-permits>
+            </semaphore>
+        </semaphores>
+    </cp-subsystem>
+
+</hazelcast>
