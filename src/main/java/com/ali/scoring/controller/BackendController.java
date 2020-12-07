@@ -1,6 +1,7 @@
 package com.ali.scoring.controller;
 
 import com.ali.scoring.config.Constants;
+import com.ali.scoring.service.VertxInstanceService;
 import io.vertx.core.http.HttpServerResponse;
 import io.vertx.core.impl.logging.Logger;
 import io.vertx.core.impl.logging.LoggerFactory;
@@ -49,6 +50,13 @@ public class BackendController {
                 traceIdBatch.getTraceIdList().addAll(traceIdList);
             }
 
+            JsonObject batchJson = new JsonObject();
+            batchJson.put("batchPos", traceIdBatch.getBatchPos());
+            batchJson.put("processCount", traceIdBatch.getProcessCount());
+            batchJson.put("traceIdList", traceIdBatch.getTraceIdList());
+
+            //getmd5
+            VertxInstanceService.getVertx().eventBus().send("getMD5", batchJson);
             //            TraceDataService.start();
             HttpServerResponse response = ctx.response();
             // Write to the response and end it
@@ -59,10 +67,22 @@ public class BackendController {
 
             FINISH_PROCESS_COUNT++;
             HttpServerResponse response = ctx.response();
+            if (FINISH_PROCESS_COUNT >= 2) {
+                VertxInstanceService.getVertx().eventBus().send("sendCheckSum", new JsonObject());
+            }
 
             // Write to the response and end it
             response.end("suc");
         });
+
+        router.get("/test").handler(ctx -> {
+
+            HttpServerResponse response = ctx.response();
+
+            // Write to the response and end it
+            response.end("suc");
+        });
+
 
 
     }

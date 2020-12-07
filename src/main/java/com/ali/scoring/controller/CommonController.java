@@ -8,6 +8,7 @@ import io.vertx.core.Vertx;
 import io.vertx.core.http.HttpServerRequest;
 import io.vertx.core.http.HttpServerResponse;
 import io.vertx.core.impl.VertxImpl;
+import io.vertx.core.json.JsonObject;
 import io.vertx.ext.web.Router;
 import io.vertx.ext.web.handler.BodyHandler;
 import io.vertx.spi.cluster.hazelcast.HazelcastClusterManager;
@@ -57,6 +58,14 @@ public class CommonController {
         router.get("/setParameter").handler(ctx -> {
             DATA_SOURCE_PORT = ctx.request().getParam("port");
             TraceDataService.start();
+            HttpServerResponse response = ctx.response();
+            // Write to the response and end it
+            response.end("suc");
+        });
+
+        router.get("/test").handler(ctx -> {
+            DATA_SOURCE_PORT = ctx.request().getParam("port");
+            vertx.eventBus().send("send-to-test", new JsonObject().put("port", DATA_SOURCE_PORT));
             HttpServerResponse response = ctx.response();
             // Write to the response and end it
             response.end("suc");

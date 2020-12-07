@@ -5,6 +5,7 @@ import com.ali.scoring.controller.BackendController;
 import com.ali.scoring.controller.ClientController;
 import com.ali.scoring.controller.CommonController;
 import com.ali.scoring.service.CheckSumService;
+import com.ali.scoring.service.ConsumerTest;
 import com.ali.scoring.service.TraceDataService;
 import io.vertx.core.AbstractVerticle;
 import io.vertx.core.Promise;
@@ -26,6 +27,7 @@ public class MainVerticle extends AbstractVerticle {
 
 
         if (Utils.isClientProcess()) {
+            ConsumerTest.start();
             ClientController.router(router);
             TraceDataService.init();
             // waiting to set parameter then init client data

@@ -11,6 +11,7 @@ import io.vertx.core.impl.logging.LoggerFactory;
 import io.vertx.core.json.Json;
 import io.vertx.core.json.JsonObject;
 
+import java.io.IOException;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
@@ -36,63 +37,78 @@ public class CheckSumService implements Runnable {
 
     @Override
     public void run() {
-        TraceIdBatch traceIdBatch = null;
-        String[] ports = new String[]{Constants.CLIENT_PROCESS_PORT1, Constants.CLIENT_PROCESS_PORT2};
-        while (true) {
-            try {
-                traceIdBatch = BackendController.getFinishedBatch();
-                if (traceIdBatch == null) {
-                    // send checksum when client process has all finished.
-                    if (BackendController.isFinished()) {
-                        if(sendCheckSum()){
-                            break;
-                        }
-                    }
-                    continue;
-                }
-                Map<String, Set<String>> map = new HashMap<>();
-                // if (traceIdBatch.getTraceIdList().size() > 0) {
-                int batchPos = traceIdBatch.getBatchPos();
-                // to get all spans from remote
-                for (String port : ports) {
-                    getWrongTrace(traceIdBatch.getTraceIdList(), port, batchPos, processMap -> {
-                        if (processMap != null) {
-                            for (Map.Entry<String, List<String>> entry : processMap.entrySet()) {
-                                String traceId = entry.getKey();
-                                Set<String> spanSet = map.computeIfAbsent(traceId, k -> new HashSet<>());
-                                spanSet.addAll(entry.getValue());
-                            }
-                        }
-                    });
-                }
+        //get md5 for each batch
+        VertxInstanceService.getVertx().eventBus().consumer("getMD5", consumer -> {
+            JsonObject batch = (JsonObject) consumer.body();
+            getBadTraceMD5(batch);
+        });
 
-                for (Map.Entry<String, Set<String>> entry : map.entrySet()) {
+        VertxInstanceService.getVertx().eventBus().consumer("sendCheckSum", consumer -> {
+            sendCheckSum();
+        });
+
+//        TraceIdBatch traceIdBatch = null;
+//        while (true) {
+//            try {
+//                traceIdBatch = BackendController.getFinishedBatch();
+//                if (traceIdBatch == null) {
+//                    // send checksum when client process has all finished.
+//                    if (BackendController.isFinished()) {
+//                        if (sendCheckSum()) {
+//                            break;
+//                        }
+//                    }
+//                    continue;
+//                }
+//
+//            } catch (Exception e) {
+//                // record batchPos when an exception  occurs.
+//                int batchPos = 0;
+//                if (traceIdBatch != null) {
+//                    batchPos = traceIdBatch.getBatchPos();
+//                }
+//                LOGGER.warn(String.format("fail to getWrongTrace, batchPos:%d", batchPos), e);
+//            } finally {
+//                if (traceIdBatch == null) {
+//                    try {
+//                        Thread.sleep(100);
+//                    } catch (Throwable e) {
+//                        // quiet
+//                    }
+//                }
+//            }
+//        }
+    }
+
+    public static void getBadTraceMD5(JsonObject traceIdBatch) {
+
+        Map<String, Set<String>> map = new HashMap<>();
+        String[] ports = new String[]{Constants.CLIENT_PROCESS_PORT1, Constants.CLIENT_PROCESS_PORT2};
+
+        // if (traceIdBatch.getTraceIdList().size() > 0) {
+        int batchPos = traceIdBatch.getInteger("batchPos");
+        // to get all spans from remote
+        for (String port : ports) {
+            Map<String, List<String>> processMap = getWrongTrace(traceIdBatch.getJsonArray("traceIdList").getList(), port, batchPos);
+            if (processMap != null) {
+                for (Map.Entry<String, List<String>> entry : processMap.entrySet()) {
                     String traceId = entry.getKey();
-                    Set<String> spanSet = entry.getValue();
-                    // order span with startTime
-                    String spans = spanSet.stream().sorted(
-                            Comparator.comparing(CheckSumService::getStartTime)).collect(Collectors.joining("\n"));
-                    spans = spans + "\n";
-                    // output all span to check
-                    // LOGGER.info("traceId:" + traceId + ",value:\n" + spans);
-                    TRACE_CHUCKSUM_MAP.put(traceId, Utils.MD5(spans));
-                }
-            } catch (Exception e) {
-                // record batchPos when an exception  occurs.
-                int batchPos = 0;
-                if (traceIdBatch != null) {
-                    batchPos = traceIdBatch.getBatchPos();
-                }
-                LOGGER.warn(String.format("fail to getWrongTrace, batchPos:%d", batchPos), e);
-            } finally {
-                if (traceIdBatch == null) {
-                    try {
-                        Thread.sleep(100);
-                    } catch (Throwable e) {
-                        // quiet
-                    }
+                    Set<String> spanSet = map.computeIfAbsent(traceId, k -> new HashSet<>());
+                    spanSet.addAll(entry.getValue());
                 }
             }
+        }
+
+        for (Map.Entry<String, Set<String>> entry : map.entrySet()) {
+            String traceId = entry.getKey();
+            Set<String> spanSet = entry.getValue();
+            // order span with startTime
+            String spans = spanSet.stream().sorted(
+                    Comparator.comparing(CheckSumService::getStartTime)).collect(Collectors.joining("\n"));
+            spans = spans + "\n";
+            // output all span to check
+            // LOGGER.info("traceId:" + traceId + ",value:\n" + spans);
+            TRACE_CHUCKSUM_MAP.put(traceId, Utils.MD5(spans));
         }
     }
 
@@ -104,7 +120,7 @@ public class CheckSumService implements Runnable {
      * @param batchPos
      * @return
      */
-    private Map<String, List<String>> getWrongTrace(List<String> traceIdList, String port, int batchPos, Consumer<Map<String, List<String>>> consumer) {
+    private static Map<String, List<String>> getWrongTrace(List<String> traceIdList, String port, int batchPos) {
         JsonObject jsonBody = new JsonObject();
         jsonBody.put("badTraceIdList", traceIdList).put("batchPos", batchPos);
         //call http api to get trace data
@@ -117,28 +133,29 @@ public class CheckSumService implements Runnable {
         //outputstream with lines
         HttpResponse.BodyHandler<String> bodyHandler = HttpResponse.BodyHandlers.ofString();
         HttpClient client = HttpClient.newHttpClient();
-        CompletableFuture<HttpResponse<String>> future = client.sendAsync(request, bodyHandler);
-        future.whenComplete((res, ex) -> {
-            LOGGER.debug(res.body());
-
+        HttpResponse<String> res = null;
+        try {
+            res = client.send(request, bodyHandler);
+        } catch (Exception e) {
+            LOGGER.error("getWrongTrace exception", e);
+        }
+        if (res != null && res.statusCode() == 200) {
             Map<String, List<String>> map = Json.decodeValue(res.body(), Map.class);
-            consumer.accept(map);
-        });
-
-
+            return map;
+        }
         return null;
     }
 
 
     private boolean sendCheckSum() {
         String result = Json.encode(TRACE_CHUCKSUM_MAP);
-        JsonObject jsonBody = new JsonObject();
-        jsonBody.put("result", result);
+        StringBuffer params = new StringBuffer().append("result=").append(result);
         //call http api to get trace data
-        HttpRequest.BodyPublisher body = HttpRequest.BodyPublishers.ofString(jsonBody.encode());
+        HttpRequest.BodyPublisher body = HttpRequest.BodyPublishers.ofString(params.toString());
         String url = String.format("http://localhost:%s/api/finished", Utils.sendToApiPort());
 
         HttpRequest request = HttpRequest.newBuilder().uri(URI.create(url))
+                .header("Content-Type", "application/x-www-form-urlencoded")
                 .POST(body).build();
         //output stream with lines
         HttpResponse.BodyHandler<String> bodyHandler = HttpResponse.BodyHandlers.ofString();
@@ -147,7 +164,7 @@ public class CheckSumService implements Runnable {
             HttpResponse<String> bodyResult = client.send(request, bodyHandler);
             LOGGER.debug("send to :" + url + ", result: {}" + bodyResult.body());
             return bodyResult.statusCode() == 200;
-        }  catch (Exception e) {
+        } catch (Exception e) {
             LOGGER.error(e);
         }
         return false;

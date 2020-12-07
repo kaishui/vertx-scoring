@@ -73,12 +73,8 @@ public class TraceDataService implements Runnable {
 
                     //set cache data for saving the before data
                     Map<String, List<String>> traceMap = BATCH_TRACE_LIST.get(pos.get());
-                    List<String> spanList = traceMap.get(traceId);
+                    List<String> spanList = traceMap.computeIfAbsent(traceId, k -> new ArrayList<>());
 
-                    if (spanList == null) {
-                        spanList = new ArrayList<>();
-                        traceMap.put(traceId, spanList);
-                    }
                     spanList.add(line);
 
                     //save error or http status != 200
@@ -163,10 +159,6 @@ public class TraceDataService implements Runnable {
                     wrongTraceMap.put(traceId, spanList);
                 }
             }
-            // output spanlist to check
-            String spanListString = spanList.stream().collect(Collectors.joining("\n"));
-            logger.debug(String.format("getWrongTracing, batchPos:%d, pos:%d, traceId:%s, spanList:\n %s",
-                    batchPos, pos,  traceId, spanListString));
         }
     }
     /**

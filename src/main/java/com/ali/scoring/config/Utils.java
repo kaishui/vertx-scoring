@@ -66,4 +66,15 @@ public class Utils {
         String port = System.getProperty("dev", CommonController.getDataSourcePort());
         return port;
     }
+
+    public static String getErrorTracePath() {
+        String port = System.getProperty("server.port", "8080");
+        if ("8000".equals(port)) {
+            return "get-error-traceIds-8001";
+        } else if ("8001".equals(port)) {
+            return "get-error-traceIds-8000";
+        } else {
+            return null;
+        }
+    }
 }
