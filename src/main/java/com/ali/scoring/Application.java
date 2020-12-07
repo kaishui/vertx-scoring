@@ -20,6 +20,8 @@ public class Application {
 
         VertxOptions options = new VertxOptions().setClusterManager(mgr);
 
+        //block thread size
+        options.setWorkerPoolSize(3);
 
         Vertx.clusteredVertx(options, res -> {
             if (res.succeeded()) {

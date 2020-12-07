@@ -67,6 +67,10 @@
         <split-brain-protection-ref>split-brain-protection-name</split-brain-protection-ref>
     </multimap>
 
+    <ringbuffer name="rb">
+        <capacity>10</capacity>
+    </ringbuffer>
+
     <topic name="finishTopic">
         <global-ordering-enabled>true</global-ordering-enabled>
         <statistics-enabled>true</statistics-enabled>

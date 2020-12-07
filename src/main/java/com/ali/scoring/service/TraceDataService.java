@@ -1,9 +1,11 @@
 package com.ali.scoring.service;
 
+import com.ali.scoring.config.Constants;
 import com.ali.scoring.controller.CommonController;
-import com.google.common.collect.*;
 import io.vertx.core.impl.logging.Logger;
 import io.vertx.core.impl.logging.LoggerFactory;
+import io.vertx.core.json.Json;
+import io.vertx.core.json.JsonObject;
 
 import java.net.URI;
 import java.net.http.HttpClient;
@@ -11,16 +13,28 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.util.*;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 public class TraceDataService implements Runnable {
-    private Logger logger = LoggerFactory.getLogger(TraceDataService.class);
-
-    private static ImmutableSetMultimap.Builder<String, String> allMap = ImmutableSetMultimap.<String, String>builder();
-    private static ImmutableSet.Builder<String> badTraceIds = ImmutableSet.<String>builder();
+    private static Logger logger = LoggerFactory.getLogger(TraceDataService.class);
 
     public TraceDataService() {
+    }
+
+    // an list of trace map,like ring buffe.  key is traceId, value is spans ,  r
+    private static List<Map<String, List<String>>> BATCH_TRACE_LIST = new ArrayList<>();
+    // make 15 bucket to cache traceData
+    private static int BATCH_COUNT = 15;
+
+    // 15 * 20k = 300k
+    public static void init() {
+        for (int i = 0; i < BATCH_COUNT; i++) {
+            BATCH_TRACE_LIST.add(new ConcurrentHashMap<>(Constants.BATCH_SIZE));
+        }
     }
 
     public static void start() {
@@ -35,60 +49,77 @@ public class TraceDataService implements Runnable {
         if ("8000".equals(port) || "8001".equals(port)) {
             long startTime = System.nanoTime();
             try {
+                Set<String> badTraceIds = new HashSet<>(1000);
+
                 //call http api to get trace data
                 HttpRequest request = HttpRequest.newBuilder().uri(URI.create(getPath())).GET().build();
                 //outputstream with lines
                 HttpResponse.BodyHandler<Stream<String>> bodyHandler = HttpResponse.BodyHandlers.ofLines();
                 HttpClient client = HttpClient.newHttpClient();
-                CompletableFuture<HttpResponse<Stream<String>>> future = client.sendAsync(request, bodyHandler);
-                future.thenApply(HttpResponse::body).whenComplete((inputStream, ex) -> {
+                HttpResponse<Stream<String>> response = client.send(request, bodyHandler);
 
-                    //id length = min=12, average=15.863911, max=16
-//                    System.out.println("id metric");
-//                    IntSummaryStatistics summaryStatistics = inputStream.mapToInt(trace -> trace.indexOf("|"))
-//                            .summaryStatistics();
-//                    System.out.println(summaryStatistics);
-
-                    // error log
+                final AtomicInteger pos = new AtomicInteger(0);
+                AtomicLong count = new AtomicLong(0L);
+                Stream<String> lines = response.body();
+                // error log
+                //error=1 | http.status_code=xxx - 3,  needle string len is 4
+                long badTraceStartTime = System.nanoTime();
+                lines.forEach(line -> {
+                    count.addAndGet(1l);
+                    int len = line.length();
                     //error=1 | http.status_code=xxx - 3,  needle string len is 4
-                    long badTraceStartTime = System.nanoTime();
-                    Set<String> badTraceSet = inputStream.filter(line -> {
-                        int len = line.length();
-                        //error=1 | http.status_code=xxx - 3,  needle string len is 4
-                        String endFlag = line.substring(len - 7, len - 3);
-                        return endFlag.equals("erro") || endFlag.equals("ode=");
-                    }).map(line -> line.substring(0, 16)).collect(Collectors.toSet());
-                    long badTraceEndTime = System.nanoTime();
-                    System.out.println("get bad time:" + (badTraceEndTime - badTraceStartTime));
-                    System.out.println("sta time:" + (badTraceEndTime - startTime));
-                    System.out.println("bad traceIds");
+                    String endFlag = line.substring(len - 7, len - 3);
+                    String traceId = line.substring(0, line.indexOf("|"));
 
-                    // error=1 start ?
-//                    String errorFlag = new StringBuffer("error=1").reverse().toString();
-//                    String httpNomarl = new StringBuffer("http.status_code=200").reverse().toString();
-//                    String http3 = new StringBuffer("http.status_code=3").reverse().toString();
-//                    String http5 = new StringBuffer("http.status_code=5").reverse().toString();
-//                    String http4 = new StringBuffer("http.status_code=4").reverse().toString();
-//                    ImmutableSet<String> flags = ImmutableSet.of(
-//                            errorFlag, http3, http4, http5, httpNomarl
-//                    );
-//
-//                    flags.parallelStream().forEach(flag ->{
-//                        System.out.println("error code:" + flag);
-//                        IntSummaryStatistics errorStat = inputStream.map(trace -> new StringBuffer(trace).reverse())
-//                                .map(trace -> trace.indexOf(flag)).mapToInt(len -> len).summaryStatistics();
-//
-//                        System.out.println(errorStat);
-//
-//                    });
+                    //set cache data for saving the before data
+                    Map<String, List<String>> traceMap = BATCH_TRACE_LIST.get(pos.get());
+                    List<String> spanList = traceMap.get(traceId);
 
-                    // http_stust
-//                    Multimap<String, String> list = inputStream.collect(Multimaps.toMultimap(trace -> trace.substring(0, trace.indexOf("\\|")),
-//                            val -> val, MultimapBuilder.treeKeys().arrayListValues()::build));
-//                    System.out.println(list.keys().toString());
-//                    logger.debug("list");
+                    if (spanList == null) {
+                        spanList = new ArrayList<>();
+                        traceMap.put(traceId, spanList);
+                    }
+                    spanList.add(line);
+
+                    //save error or http status != 200
+                    if (endFlag.equals("erro") || endFlag.equals("ode=")) {
+                        badTraceIds.add(traceId);
+                    }
+
+                    // 20K 数据一个Batch
+                    if (count.get() % Constants.BATCH_SIZE == 0) {
+                        pos.addAndGet(1);
+                        // loop cycle
+                        if (pos.get() >= BATCH_COUNT) {
+                            pos.set(0);
+                        }
+                        traceMap = BATCH_TRACE_LIST.get(pos.get());
+                        // donot produce data, wait backend to consume data
+                        // TODO to use lock/notify
+//                            if (traceMap.size() > 0) {
+//                                while (true) {
+//                                    Thread.sleep(10);
+//                                    if (traceMap.size() == 0) {
+//                                        break;
+//                                    }
+//                                }
+//                            }
+                        // batchPos begin from 0, so need to minus 1
+                        int batchPos = (int) (count.get() / Constants.BATCH_SIZE) - 1;
+                        updateWrongTraceId(badTraceIds, batchPos);
+                        badTraceIds.clear();
+                        logger.info("suc to updateBadTraceId, batchPos:" + batchPos);
+                    }
                 });
+                long badTraceEndTime = System.nanoTime();
+                System.out.println("get bad time:" + (badTraceEndTime - badTraceStartTime));
+                System.out.println("sta time:" + (badTraceEndTime - startTime));
+                System.out.println("bad traceIds");
 
+                //剩下的batch update
+                updateWrongTraceId(badTraceIds, (int) (count.get() / Constants.BATCH_SIZE) -1);
+                //告诉backend 完成
+                callFinish();
             } catch (Exception e) {
 
             } finally {
@@ -99,26 +130,81 @@ public class TraceDataService implements Runnable {
     }
 
 
-    private String extractLineData(String line) {
-        String[] cols = line.split("\\|");
-        String traceId = null;
-        if (cols != null && cols.length > 1) {
-            traceId = cols[0];
-            allMap.put(traceId, line);
-            if (cols.length > 8) {
-                String tags = cols[8];
-                if (tags != null) {
-                    // 错误数据设置在 badTraceIdList
-                    if (tags.contains("error=1")) {
-                        //todo: listener
-                        badTraceIds.add(traceId);
-                    } else if (tags.contains("http.status_code=") && tags.indexOf("http.status_code=200") < 0) {
-                        badTraceIds.add(traceId);
-                    }
+    public static String getWrongTracing(List<String> traceIdList, int batchPos) {
+        Map<String, List<String>> wrongTraceMap = new HashMap<>();
+        int pos = batchPos % BATCH_COUNT;
+        int previous = pos - 1;
+        if (previous == -1) {
+            previous = BATCH_COUNT - 1;
+        }
+        int next = pos + 1;
+        if (next == BATCH_COUNT) {
+            next = 0;
+        }
+        getWrongTraceWithBatch(previous, pos, traceIdList, wrongTraceMap);
+        getWrongTraceWithBatch(pos, pos, traceIdList, wrongTraceMap);
+        getWrongTraceWithBatch(next, pos, traceIdList, wrongTraceMap);
+        // to clear spans, don't block client process thread. TODO to use lock/notify
+        BATCH_TRACE_LIST.get(previous).clear();
+        return Json.encode(wrongTraceMap);
+    }
+
+    private static void getWrongTraceWithBatch(int batchPos, int pos, List<String> traceIdList, Map<String, List<String>> wrongTraceMap) {
+        // donot lock traceMap,  traceMap may be clear anytime.
+        Map<String, List<String>> traceMap = BATCH_TRACE_LIST.get(batchPos);
+        for (String traceId : traceIdList) {
+            List<String> spanList = traceMap.get(traceId);
+            if (spanList != null) {
+                // one trace may cross to batch (e.g batch size 20000, span1 in line 19999, span2 in line 20001)
+                List<String> existSpanList = wrongTraceMap.get(traceId);
+                if (existSpanList != null) {
+                    existSpanList.addAll(spanList);
+                } else {
+                    wrongTraceMap.put(traceId, spanList);
                 }
             }
+            // output spanlist to check
+            String spanListString = spanList.stream().collect(Collectors.joining("\n"));
+            logger.debug(String.format("getWrongTracing, batchPos:%d, pos:%d, traceId:%s, spanList:\n %s",
+                    batchPos, pos,  traceId, spanListString));
         }
-        return traceId;
+    }
+    /**
+     * call backend controller to update wrong tradeId list.
+     *
+     * @param badTraceIdList
+     * @param batchPos
+     */
+    private void updateWrongTraceId(Set<String> badTraceIdList, int batchPos) {
+        if (badTraceIdList.size() > 0) {
+            JsonObject jsonBody = new JsonObject();
+            jsonBody.put("badTraceIdList", new ArrayList<>(badTraceIdList));
+            jsonBody.put("batchPos", batchPos);
+            //call http api to get trace data
+            HttpRequest.BodyPublisher body = HttpRequest.BodyPublishers.ofString(jsonBody.encode());
+            HttpRequest request = HttpRequest.newBuilder().uri(URI.create("http://localhost:8002/setWrongTraceId"))
+                    .POST(body).build();
+            //outputstream with lines
+            HttpResponse.BodyHandler<String> bodyHandler = HttpResponse.BodyHandlers.ofString();
+            HttpClient client = HttpClient.newHttpClient();
+            CompletableFuture<HttpResponse<String>> future = client.sendAsync(request, bodyHandler);
+            future.whenComplete((res, ex) -> {
+                logger.debug(res.body());
+            });
+        }
+    }
+
+    // notify backend process when client process has finished.
+    private void callFinish() {
+        HttpRequest request = HttpRequest.newBuilder().uri(URI.create("http://localhost:8002/finish"))
+                .GET().build();
+        //outputstream with lines
+        HttpResponse.BodyHandler<String> bodyHandler = HttpResponse.BodyHandlers.ofString();
+        HttpClient client = HttpClient.newHttpClient();
+        CompletableFuture<HttpResponse<String>> future = client.sendAsync(request, bodyHandler);
+        future.whenComplete((res, ex) -> {
+            logger.debug(res.body());
+        });
     }
 
     private String getURI() {
@@ -146,4 +232,11 @@ public class TraceDataService implements Runnable {
             return null;
         }
     }
+
+//    public static void main(String[] args) {
+//        Map<String, Object> jsonBody = new HashMap<>();
+//        jsonBody.put("badTraceIdList", new ArrayList<>());
+//        jsonBody.put("batchPos", 1);
+//        System.out.println(jsonBody.toString());
+//    }
 }
