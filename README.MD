@@ -43,3 +43,9 @@ java -Dserver.port=8080 -DcheckSumPath=/software/workspace/aliyun/demo/trace/che
 java -Dserver.port=8080 -DcheckSumPath=/software/workspace/aliyun/demo/checkSum.big/checkSum.data -jar /software/workspace/aliyun/demo/scoring-1.0-SNAPSHOT.jar
 
 ```
+
+## idea startup
+```
+-Dserver.port=8001 -XX:+UnlockExperimentalVMOptions -XX:+UseZGC -Xmx4G -Xms3G -XX:NewRatio=9 -XX:GCTimeRatio=99
+```
+![statup](./src/test/resources/images/startup.png)
