@@ -26,22 +26,6 @@ public class CommonController {
 
 
         router.get("/ready").handler(ctx -> {
-//            List<String> nodes = ((VertxImpl) vertx).getClusterManager().getNodes();
-//            HazelcastClusterManager hazelcastClusterManager = (HazelcastClusterManager) ((VertxImpl) vertx).getClusterManager();
-//            HazelcastInstance hazelcastInstance = hazelcastClusterManager.getHazelcastInstance();
-//            MultiMap<String, String> map = hazelcastInstance.getMultiMap("default");
-//            Ringbuffer<Object> rb = hazelcastInstance.getRingbuffer("rb");
-//            map.put("port", new Date().toString());
-//
-//            for (int i = 0; i < 20; i++) {
-//                rb.add("" + i);
-//            }
-//            System.out.println(rb.capacity());
-//            System.out.println(rb.size());
-//
-//            System.out.println(map.toString());
-//
-//            System.out.println(nodes.toString());
             HttpServerResponse response = ctx.response();
             response.putHeader("content-type", "text/plain");
             // Write to the response and end it

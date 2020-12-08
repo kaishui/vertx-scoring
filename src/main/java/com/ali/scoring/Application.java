@@ -1,5 +1,6 @@
 package com.ali.scoring;
 
+import com.ali.scoring.config.Utils;
 import com.ali.scoring.service.VertxInstanceService;
 import com.ali.scoring.vertx_scoring.MainVerticle;
 import com.hazelcast.config.Config;
@@ -20,8 +21,6 @@ public class Application {
         hazelcastConfig.setClusterName("my-cluster-name");
 
         ClusterManager mgr = new HazelcastClusterManager(hazelcastConfig);
-
-        String local = InetAddress.getLocalHost().getHostAddress();
 
         VertxOptions options = new VertxOptions()
                 .setClusterManager(mgr);

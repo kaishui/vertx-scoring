@@ -70,7 +70,7 @@ public class TraceDataService implements Runnable {
                 // error log
                 //error=1 | http.status_code=xxx - 3,  needle string len is 4
                 lines.forEach(line -> {
-                    count.addAndGet(1l);
+                    count.incrementAndGet();
                     int len = line.length();
                     //error=1 | http.status_code=xxx - 3,  needle string len is 4
                     String endFlag = line.substring(len - 7, len - 3);
@@ -160,12 +160,13 @@ public class TraceDataService implements Runnable {
      */
     private void updateWrongTraceId(Set<String> badTraceIdList, int batchPos) {
         if (badTraceIdList.size() > 0) {
+            logger.debug("updateWrongTraceId: " + badTraceIdList.size());
+            IAtomicLong atomicLong = VertxInstanceService.getInstance(vertx).getCPSubsystem().getAtomicLong("sender");
+            logger.debug("sender:" + atomicLong.getAndIncrement());
             JsonObject jsonBody = new JsonObject();
             jsonBody.put("badTraceIdList", new ArrayList<>(badTraceIdList));
             jsonBody.put("batchPos", batchPos);
 
-            IAtomicLong atomicLong = VertxInstanceService.getHazelcastInstance().getCPSubsystem().getAtomicLong("sender");
-            atomicLong.getAndIncrement();
             //GET BAD TRACE MD5
             vertx.eventBus().request("getMD5", jsonBody, handler ->{
                 logger.info("getMD5 result:" + handler.succeeded());

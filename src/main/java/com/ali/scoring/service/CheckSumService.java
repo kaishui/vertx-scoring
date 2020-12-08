@@ -41,22 +41,22 @@ public class CheckSumService implements Runnable {
     public void run() {
         //get md5 for each batch
         vertx.eventBus().consumer("getMD5", consumer -> {
-            IAtomicLong atomicLongConsumer = VertxInstanceService.getHazelcastInstance().getCPSubsystem().getAtomicLong("consumer");
+            IAtomicLong atomicLongConsumer = VertxInstanceService.getInstance(vertx).getCPSubsystem().getAtomicLong("consumer");
             atomicLongConsumer.getAndIncrement();
             getBadTraceMD5((JsonObject) consumer.body());
             consumer.reply(new JsonObject().put("result", "suc"));
         });
 
         vertx.eventBus().consumer("sendCheckSum", consumer -> {
-            IAtomicLong atomicLongConsumer = VertxInstanceService.getHazelcastInstance().getCPSubsystem().getAtomicLong("consumer");
-            IAtomicLong atomicLongSender = VertxInstanceService.getHazelcastInstance().getCPSubsystem().getAtomicLong("sender");
+            IAtomicLong atomicLongConsumer = VertxInstanceService.getInstance(vertx).getCPSubsystem().getAtomicLong("consumer");
+            IAtomicLong atomicLongSender = VertxInstanceService.getInstance(vertx).getCPSubsystem().getAtomicLong("sender");
             if (atomicLongConsumer.get() == atomicLongSender.get()) {
                 sendCheckSum();
             }
         });
     }
 
-    public static void getBadTraceMD5(JsonObject traceIdBatch) {
+    public void getBadTraceMD5(JsonObject traceIdBatch) {
 
         Map<String, Set<String>> map = new HashMap<>();
         String[] ports = new String[]{Constants.CLIENT_PROCESS_PORT1, Constants.CLIENT_PROCESS_PORT2};
@@ -85,11 +85,11 @@ public class CheckSumService implements Runnable {
             spans = spans + "\n";
             // output all span to check
             // LOGGER.info("traceId:" + traceId + ",value:\n" + spans);
-            IMap<Object, Object> checkSumMap = VertxInstanceService.getHazelcastInstance().getMap("checkSumMap");
+            IMap<Object, Object> checkSumMap = VertxInstanceService.getInstance(vertx).getMap("checkSumMap");
             checkSumMap.put(traceId, Utils.MD5(spans));
         }
 
-        VertxInstanceService.getVertx().eventBus().send("sendCheckSum", new JsonObject());
+       vertx.eventBus().send("sendCheckSum", new JsonObject());
     }
 
     /**
@@ -100,7 +100,7 @@ public class CheckSumService implements Runnable {
      * @param batchPos
      * @return
      */
-    private static Map<String, List<String>> getWrongTrace(List<String> traceIdList, String port, int batchPos) {
+    private Map<String, List<String>> getWrongTrace(List<String> traceIdList, String port, int batchPos) {
         JsonObject jsonBody = new JsonObject();
         jsonBody.put("badTraceIdList", traceIdList).put("batchPos", batchPos);
         //call http api to get trace data
@@ -128,7 +128,7 @@ public class CheckSumService implements Runnable {
 
 
     private boolean sendCheckSum() {
-        IMap<Object, Object> checkSumMap = VertxInstanceService.getHazelcastInstance().getMap("checkSumMap");
+        IMap<Object, Object> checkSumMap = VertxInstanceService.getInstance(vertx).getMap("checkSumMap");
 
         String result = Json.encode(checkSumMap);
         StringBuffer params = new StringBuffer().append("result=").append(result);
