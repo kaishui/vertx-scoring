@@ -65,7 +65,6 @@ public class CommonController {
 
         router.get("/test").handler(ctx -> {
             DATA_SOURCE_PORT = ctx.request().getParam("port");
-            vertx.eventBus().send("send-to-test", new JsonObject().put("port", DATA_SOURCE_PORT));
             HttpServerResponse response = ctx.response();
             // Write to the response and end it
             response.end("suc");

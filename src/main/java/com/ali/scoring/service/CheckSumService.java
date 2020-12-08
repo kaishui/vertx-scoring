@@ -6,6 +6,7 @@ import com.ali.scoring.config.Utils;
 import com.ali.scoring.controller.BackendController;
 import com.ali.scoring.controller.CommonController;
 import com.ali.scoring.controller.TraceIdBatch;
+import io.vertx.core.Vertx;
 import io.vertx.core.impl.logging.Logger;
 import io.vertx.core.impl.logging.LoggerFactory;
 import io.vertx.core.json.Json;
@@ -29,21 +30,26 @@ public class CheckSumService implements Runnable {
 
     // save chuckSum for the total wrong trace
     private static Map<String, String> TRACE_CHUCKSUM_MAP = new ConcurrentHashMap<>();
+    private final Vertx vertx;
 
-    public static void start() {
-        Thread t = new Thread(new CheckSumService(), "CheckSumServiceThread");
+    public CheckSumService(Vertx vertx) {
+        this.vertx = vertx;
+    }
+
+    public static void start(Vertx vertx) {
+        Thread t = new Thread(new CheckSumService(vertx), "CheckSumServiceThread");
         t.start();
     }
 
     @Override
     public void run() {
         //get md5 for each batch
-        VertxInstanceService.getVertx().eventBus().consumer("getMD5", consumer -> {
+        vertx.eventBus().consumer("getMD5", consumer -> {
             JsonObject batch = (JsonObject) consumer.body();
             getBadTraceMD5(batch);
         });
 
-        VertxInstanceService.getVertx().eventBus().consumer("sendCheckSum", consumer -> {
+        vertx.eventBus().consumer("sendCheckSum", consumer -> {
             sendCheckSum();
         });
 

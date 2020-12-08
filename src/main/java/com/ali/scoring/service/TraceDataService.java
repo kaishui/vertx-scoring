@@ -181,7 +181,7 @@ public class TraceDataService implements Runnable {
             HttpClient client = HttpClient.newHttpClient();
             CompletableFuture<HttpResponse<String>> future = client.sendAsync(request, bodyHandler);
             future.whenComplete((res, ex) -> {
-                logger.debug(res.body());
+                logger.debug( request.uri().getPath() + " " + res.body() + " " + res.statusCode());
             });
         }
     }
@@ -195,7 +195,7 @@ public class TraceDataService implements Runnable {
         HttpClient client = HttpClient.newHttpClient();
         CompletableFuture<HttpResponse<String>> future = client.sendAsync(request, bodyHandler);
         future.whenComplete((res, ex) -> {
-            logger.debug(res.body());
+            logger.debug( request.uri().getPath() + " " + res.body() + " " + res.statusCode());
         });
     }
 
@@ -225,10 +225,4 @@ public class TraceDataService implements Runnable {
         }
     }
 
-//    public static void main(String[] args) {
-//        Map<String, Object> jsonBody = new HashMap<>();
-//        jsonBody.put("badTraceIdList", new ArrayList<>());
-//        jsonBody.put("batchPos", 1);
-//        System.out.println(jsonBody.toString());
-//    }
 }

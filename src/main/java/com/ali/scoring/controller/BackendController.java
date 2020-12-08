@@ -33,7 +33,7 @@ public class BackendController {
     }
 
     public static void router(Router router) {
-        router.route("/setWrongTraceId").handler(ctx -> {
+        router.post("/setWrongTraceId").handler(ctx -> {
             JsonObject body = ctx.getBodyAsJson();
             int batchPos = body.getInteger("batchPos");
             int pos = body.getInteger("batchPos") % BATCH_COUNT;
