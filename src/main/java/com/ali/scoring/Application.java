@@ -5,9 +5,12 @@ import com.ali.scoring.vertx_scoring.MainVerticle;
 import com.hazelcast.config.Config;
 import io.vertx.core.Vertx;
 import io.vertx.core.VertxOptions;
+import io.vertx.core.eventbus.EventBusOptions;
 import io.vertx.core.spi.cluster.ClusterManager;
 import io.vertx.spi.cluster.hazelcast.ConfigUtil;
 import io.vertx.spi.cluster.hazelcast.HazelcastClusterManager;
+
+import java.net.InetAddress;
 
 public class Application {
 
@@ -18,7 +21,10 @@ public class Application {
 
         ClusterManager mgr = new HazelcastClusterManager(hazelcastConfig);
 
-        VertxOptions options = new VertxOptions().setClusterManager(mgr);
+        String local = InetAddress.getLocalHost().getHostAddress();
+
+        VertxOptions options = new VertxOptions()
+                .setClusterManager(mgr);
 
         //block thread size
         options.setWorkerPoolSize(3);

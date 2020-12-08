@@ -2,6 +2,9 @@ package com.ali.scoring.service;
 
 import com.ali.scoring.config.Constants;
 import com.ali.scoring.controller.CommonController;
+import com.hazelcast.cp.IAtomicLong;
+import io.vertx.core.Handler;
+import io.vertx.core.Vertx;
 import io.vertx.core.impl.logging.Logger;
 import io.vertx.core.impl.logging.LoggerFactory;
 import io.vertx.core.json.Json;
@@ -12,23 +15,26 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.util.*;
-import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
-import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 public class TraceDataService implements Runnable {
     private static Logger logger = LoggerFactory.getLogger(TraceDataService.class);
 
-    public TraceDataService() {
+    private final Vertx vertx;
+
+    public TraceDataService(Vertx vertx) {
+        this.vertx = vertx;
     }
 
     // an list of trace map,like ring buffe.  key is traceId, value is spans ,  r
     private static List<Map<String, List<String>>> BATCH_TRACE_LIST = new ArrayList<>();
     // make 15 bucket to cache traceData
-    private static int BATCH_COUNT = 15;
+    private static int BATCH_COUNT = 100;
+
+    private static AtomicInteger badTraceSize = new AtomicInteger(0);
 
     // 15 * 20k = 300k
     public static void init() {
@@ -37,8 +43,8 @@ public class TraceDataService implements Runnable {
         }
     }
 
-    public static void start() {
-        Thread t = new Thread(new TraceDataService(), "ProcessDataThread");
+    public static void start(Vertx vertx) {
+        Thread t = new Thread(new TraceDataService(vertx), "ProcessDataThread");
         t.start();
     }
 
@@ -63,7 +69,6 @@ public class TraceDataService implements Runnable {
                 Stream<String> lines = response.body();
                 // error log
                 //error=1 | http.status_code=xxx - 3,  needle string len is 4
-                long badTraceStartTime = System.nanoTime();
                 lines.forEach(line -> {
                     count.addAndGet(1l);
                     int len = line.length();
@@ -89,38 +94,23 @@ public class TraceDataService implements Runnable {
                         if (pos.get() >= BATCH_COUNT) {
                             pos.set(0);
                         }
-                        traceMap = BATCH_TRACE_LIST.get(pos.get());
-                        // donot produce data, wait backend to consume data
-                        // TODO to use lock/notify
-//                            if (traceMap.size() > 0) {
-//                                while (true) {
-//                                    Thread.sleep(10);
-//                                    if (traceMap.size() == 0) {
-//                                        break;
-//                                    }
-//                                }
-//                            }
                         // batchPos begin from 0, so need to minus 1
                         int batchPos = (int) (count.get() / Constants.BATCH_SIZE) - 1;
                         updateWrongTraceId(badTraceIds, batchPos);
+
+                        logger.info("suc to updateBadTraceId, badTraceIds size:" + badTraceSize.addAndGet(badTraceIds.size()) + " batchPos:" + batchPos);
                         badTraceIds.clear();
-                        logger.info("suc to updateBadTraceId, batchPos:" + batchPos);
                     }
                 });
-                long badTraceEndTime = System.nanoTime();
-                System.out.println("get bad time:" + (badTraceEndTime - badTraceStartTime));
-                System.out.println("sta time:" + (badTraceEndTime - startTime));
-                System.out.println("bad traceIds");
 
                 //剩下的batch update
-                updateWrongTraceId(badTraceIds, (int) (count.get() / Constants.BATCH_SIZE) -1);
-                //告诉backend 完成
-                callFinish();
+                updateWrongTraceId(badTraceIds, (int) (count.get() / Constants.BATCH_SIZE) - 1);
+                logger.info("suc to updateBadTraceId, badTraceIds size:" + badTraceSize.addAndGet(badTraceIds.size()));
             } catch (Exception e) {
 
             } finally {
                 long endTime = System.nanoTime();
-                System.out.println("time:" + (endTime - startTime));
+                logger.debug("time:" + (endTime - startTime));
             }
         }
     }
@@ -161,6 +151,7 @@ public class TraceDataService implements Runnable {
             }
         }
     }
+
     /**
      * call backend controller to update wrong tradeId list.
      *
@@ -172,43 +163,15 @@ public class TraceDataService implements Runnable {
             JsonObject jsonBody = new JsonObject();
             jsonBody.put("badTraceIdList", new ArrayList<>(badTraceIdList));
             jsonBody.put("batchPos", batchPos);
-            //call http api to get trace data
-            HttpRequest.BodyPublisher body = HttpRequest.BodyPublishers.ofString(jsonBody.encode());
-            HttpRequest request = HttpRequest.newBuilder().uri(URI.create("http://localhost:8002/setWrongTraceId"))
-                    .POST(body).build();
-            //outputstream with lines
-            HttpResponse.BodyHandler<String> bodyHandler = HttpResponse.BodyHandlers.ofString();
-            HttpClient client = HttpClient.newHttpClient();
-            CompletableFuture<HttpResponse<String>> future = client.sendAsync(request, bodyHandler);
-            future.whenComplete((res, ex) -> {
-                logger.debug( request.uri().getPath() + " " + res.body() + " " + res.statusCode());
+
+            IAtomicLong atomicLong = VertxInstanceService.getHazelcastInstance().getCPSubsystem().getAtomicLong("sender");
+            atomicLong.getAndIncrement();
+            //GET BAD TRACE MD5
+            vertx.eventBus().request("getMD5", jsonBody, handler ->{
+                logger.info("getMD5 result:" + handler.succeeded());
             });
-        }
-    }
 
-    // notify backend process when client process has finished.
-    private void callFinish() {
-        HttpRequest request = HttpRequest.newBuilder().uri(URI.create("http://localhost:8002/finish"))
-                .GET().build();
-        //outputstream with lines
-        HttpResponse.BodyHandler<String> bodyHandler = HttpResponse.BodyHandlers.ofString();
-        HttpClient client = HttpClient.newHttpClient();
-        CompletableFuture<HttpResponse<String>> future = client.sendAsync(request, bodyHandler);
-        future.whenComplete((res, ex) -> {
-            logger.debug( request.uri().getPath() + " " + res.body() + " " + res.statusCode());
-        });
-    }
 
-    private String getURI() {
-        String port = System.getProperty("server.port", "8080");
-        if ("8000".equals(port)) {
-//            return "http://localhost:" + CommonController.getDataSourcePort() + "/trace1.data";
-            return "/trace1.data";
-        } else if ("8001".equals(port)) {
-//            return "http://localhost:" + CommonController.getDataSourcePort() + "/trace2.data";
-            return "/trace2.data";
-        } else {
-            return null;
         }
     }
 

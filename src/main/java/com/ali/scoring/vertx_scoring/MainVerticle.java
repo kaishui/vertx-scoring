@@ -1,7 +1,6 @@
 package com.ali.scoring.vertx_scoring;
 
 import com.ali.scoring.config.Utils;
-import com.ali.scoring.controller.BackendController;
 import com.ali.scoring.controller.ClientController;
 import com.ali.scoring.controller.CommonController;
 import com.ali.scoring.service.CheckSumService;
@@ -18,11 +17,11 @@ public class MainVerticle extends AbstractVerticle {
         int port = Integer.parseInt(System.getProperty("server.port", "8000"));
 
         Router router = CommonController.router(vertx);
-        if (Utils.isBackendProcess()) {
-            BackendController.init();
-            BackendController.router(router);
+//        if (Utils.isBackendProcess()) {
+//            BackendController.init();
+//            BackendController.router(router);
             CheckSumService.start(vertx);
-        }
+//        }
 
 
         if (Utils.isClientProcess()) {

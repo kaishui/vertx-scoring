@@ -3,29 +3,25 @@ package com.ali.scoring.service;
 
 import com.ali.scoring.config.Constants;
 import com.ali.scoring.config.Utils;
-import com.ali.scoring.controller.BackendController;
-import com.ali.scoring.controller.CommonController;
-import com.ali.scoring.controller.TraceIdBatch;
+import com.hazelcast.cp.IAtomicLong;
+import com.hazelcast.map.IMap;
 import io.vertx.core.Vertx;
 import io.vertx.core.impl.logging.Logger;
 import io.vertx.core.impl.logging.LoggerFactory;
 import io.vertx.core.json.Json;
 import io.vertx.core.json.JsonObject;
 
-import java.io.IOException;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.util.*;
-import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.function.Consumer;
 import java.util.stream.Collectors;
 
 
 public class CheckSumService implements Runnable {
-    private static final Logger LOGGER = LoggerFactory.getLogger(BackendController.class);
+    private static final Logger LOGGER = LoggerFactory.getLogger(CheckSumService.class);
 
 
     // save chuckSum for the total wrong trace
@@ -45,45 +41,19 @@ public class CheckSumService implements Runnable {
     public void run() {
         //get md5 for each batch
         vertx.eventBus().consumer("getMD5", consumer -> {
-            JsonObject batch = (JsonObject) consumer.body();
-            getBadTraceMD5(batch);
+            IAtomicLong atomicLongConsumer = VertxInstanceService.getHazelcastInstance().getCPSubsystem().getAtomicLong("consumer");
+            atomicLongConsumer.getAndIncrement();
+            getBadTraceMD5((JsonObject) consumer.body());
+            consumer.reply(new JsonObject().put("result", "suc"));
         });
 
         vertx.eventBus().consumer("sendCheckSum", consumer -> {
-            sendCheckSum();
+            IAtomicLong atomicLongConsumer = VertxInstanceService.getHazelcastInstance().getCPSubsystem().getAtomicLong("consumer");
+            IAtomicLong atomicLongSender = VertxInstanceService.getHazelcastInstance().getCPSubsystem().getAtomicLong("sender");
+            if (atomicLongConsumer.get() == atomicLongSender.get()) {
+                sendCheckSum();
+            }
         });
-
-//        TraceIdBatch traceIdBatch = null;
-//        while (true) {
-//            try {
-//                traceIdBatch = BackendController.getFinishedBatch();
-//                if (traceIdBatch == null) {
-//                    // send checksum when client process has all finished.
-//                    if (BackendController.isFinished()) {
-//                        if (sendCheckSum()) {
-//                            break;
-//                        }
-//                    }
-//                    continue;
-//                }
-//
-//            } catch (Exception e) {
-//                // record batchPos when an exception  occurs.
-//                int batchPos = 0;
-//                if (traceIdBatch != null) {
-//                    batchPos = traceIdBatch.getBatchPos();
-//                }
-//                LOGGER.warn(String.format("fail to getWrongTrace, batchPos:%d", batchPos), e);
-//            } finally {
-//                if (traceIdBatch == null) {
-//                    try {
-//                        Thread.sleep(100);
-//                    } catch (Throwable e) {
-//                        // quiet
-//                    }
-//                }
-//            }
-//        }
     }
 
     public static void getBadTraceMD5(JsonObject traceIdBatch) {
@@ -93,9 +63,10 @@ public class CheckSumService implements Runnable {
 
         // if (traceIdBatch.getTraceIdList().size() > 0) {
         int batchPos = traceIdBatch.getInteger("batchPos");
+
         // to get all spans from remote
         for (String port : ports) {
-            Map<String, List<String>> processMap = getWrongTrace(traceIdBatch.getJsonArray("traceIdList").getList(), port, batchPos);
+            Map<String, List<String>> processMap = getWrongTrace(traceIdBatch.getJsonArray("badTraceIdList").getList(), port, batchPos);
             if (processMap != null) {
                 for (Map.Entry<String, List<String>> entry : processMap.entrySet()) {
                     String traceId = entry.getKey();
@@ -114,8 +85,11 @@ public class CheckSumService implements Runnable {
             spans = spans + "\n";
             // output all span to check
             // LOGGER.info("traceId:" + traceId + ",value:\n" + spans);
-            TRACE_CHUCKSUM_MAP.put(traceId, Utils.MD5(spans));
+            IMap<Object, Object> checkSumMap = VertxInstanceService.getHazelcastInstance().getMap("checkSumMap");
+            checkSumMap.put(traceId, Utils.MD5(spans));
         }
+
+        VertxInstanceService.getVertx().eventBus().send("sendCheckSum", new JsonObject());
     }
 
     /**
@@ -154,8 +128,11 @@ public class CheckSumService implements Runnable {
 
 
     private boolean sendCheckSum() {
-        String result = Json.encode(TRACE_CHUCKSUM_MAP);
+        IMap<Object, Object> checkSumMap = VertxInstanceService.getHazelcastInstance().getMap("checkSumMap");
+
+        String result = Json.encode(checkSumMap);
         StringBuffer params = new StringBuffer().append("result=").append(result);
+        LOGGER.debug("params: " + params);
         //call http api to get trace data
         HttpRequest.BodyPublisher body = HttpRequest.BodyPublishers.ofString(params.toString());
         String url = String.format("http://localhost:%s/api/finished", Utils.sendToApiPort());
@@ -168,7 +145,7 @@ public class CheckSumService implements Runnable {
         HttpClient client = HttpClient.newHttpClient();
         try {
             HttpResponse<String> bodyResult = client.send(request, bodyHandler);
-            LOGGER.debug("send to :" + url + ", result: {}" + bodyResult.body());
+            LOGGER.debug("send to :" + url + ", result:" + bodyResult.statusCode() + " " + bodyResult.body());
             return bodyResult.statusCode() == 200;
         } catch (Exception e) {
             LOGGER.error(e);
@@ -178,13 +155,11 @@ public class CheckSumService implements Runnable {
 
     public static long getStartTime(String span) {
         if (span != null) {
-            String[] cols = span.split("\\|");
-            if (cols.length > 8) {
-                return Utils.toLong(cols[1], -1);
-            }
+            int index = span.indexOf("|");
+            //1589285985534167 length
+            String timestamp = span.substring(index + 1, index + 17);
+            return Utils.toLong(timestamp, -1);
         }
         return -1;
     }
-
-
 }

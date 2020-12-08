@@ -57,7 +57,7 @@ public class CommonController {
 
         router.get("/setParameter").handler(ctx -> {
             DATA_SOURCE_PORT = ctx.request().getParam("port");
-            TraceDataService.start();
+            TraceDataService.start(vertx);
             HttpServerResponse response = ctx.response();
             // Write to the response and end it
             response.end("suc");

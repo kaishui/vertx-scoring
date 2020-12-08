@@ -56,7 +56,7 @@
         <value-collection-type>SET</value-collection-type>
     </multimap>
 
-    <map name="errorMap">
+    <map name="checkSumMap">
         <backup-count>0</backup-count>
         <async-backup-count>0</async-backup-count>
     </map>
