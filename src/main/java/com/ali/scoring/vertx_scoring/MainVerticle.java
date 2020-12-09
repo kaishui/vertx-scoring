@@ -25,7 +25,6 @@ public class MainVerticle extends AbstractVerticle {
             TraceDataService.init();
         }
 
-        VertxInstanceService.setVertx(vertx);
         vertx.createHttpServer().requestHandler(router).listen(port, http -> {
             if (http.succeeded()) {
                 startPromise.complete();

@@ -3,7 +3,6 @@ package com.ali.scoring.service;
 
 import com.ali.scoring.config.Constants;
 import com.ali.scoring.config.Utils;
-import com.hazelcast.cp.IAtomicLong;
 import io.vertx.core.CompositeFuture;
 import io.vertx.core.Future;
 import io.vertx.core.Promise;
@@ -19,11 +18,13 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Collectors;
 
 
 public class CheckSumService implements Runnable {
     private static final Logger LOGGER = LoggerFactory.getLogger(CheckSumService.class);
+    private AtomicInteger FINISH_COUNT = new AtomicInteger(0);
 
 
     // save chuckSum for the total wrong trace
@@ -80,8 +81,7 @@ public class CheckSumService implements Runnable {
             }
 
             if (traceIdBatch.getBoolean("isLastUpdate")) {
-                IAtomicLong atomicLongSender = VertxInstanceService.getInstance(vertx).getCPSubsystem().getAtomicLong("sender");
-                if (atomicLongSender.incrementAndGet() >= Constants.PROCESS_COUNT) {
+                if (FINISH_COUNT.incrementAndGet() >= Constants.PROCESS_COUNT) {
                     vertx.eventBus().send("sendCheckSum", new JsonObject());
                 }
             }
@@ -121,7 +121,7 @@ public class CheckSumService implements Runnable {
     private boolean sendCheckSum() {
         String result = Json.encode(TRACE_CHUCKSUM_MAP);
         StringBuffer params = new StringBuffer().append("result=").append(result);
-        LOGGER.debug("params: " + params);
+        LOGGER.warn("params: " + params);
         //call http api to get trace data
         HttpRequest.BodyPublisher body = HttpRequest.BodyPublishers.ofString(params.toString());
         String url = String.format("http://localhost:%s/api/finished", Utils.sendToApiPort());

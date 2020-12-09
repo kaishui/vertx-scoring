@@ -56,41 +56,41 @@
         <value-collection-type>SET</value-collection-type>
     </multimap>
 
-    <map name="checkSumMap">
-        <backup-count>0</backup-count>
-        <async-backup-count>0</async-backup-count>
-    </map>
-    <multimap name="all">
+<!--    <map name="checkSumMap">-->
+<!--        <backup-count>0</backup-count>-->
+<!--        <async-backup-count>0</async-backup-count>-->
+<!--    </map>-->
+<!--    <multimap name="all">
         <backup-count>0</backup-count>
         <async-backup-count>0</async-backup-count>
         <value-collection-type>SET</value-collection-type>
         <split-brain-protection-ref>split-brain-protection-name</split-brain-protection-ref>
-    </multimap>
+    </multimap>-->
 
-    <ringbuffer name="rb">
-        <capacity>10</capacity>
-    </ringbuffer>
+<!--    <ringbuffer name="rb">-->
+<!--        <capacity>10</capacity>-->
+<!--    </ringbuffer>-->
 
-    <topic name="finishTopic">
-        <global-ordering-enabled>true</global-ordering-enabled>
-        <statistics-enabled>true</statistics-enabled>
-        <message-listeners>
-            <message-listener>MessageListenerImpl</message-listener>
-        </message-listeners>
-    </topic>
-    <queue name="queue">
-        <max-size>40000</max-size>
-    </queue>
+<!--    <topic name="finishTopic">-->
+<!--        <global-ordering-enabled>true</global-ordering-enabled>-->
+<!--        <statistics-enabled>true</statistics-enabled>-->
+<!--        <message-listeners>-->
+<!--            <message-listener>MessageListenerImpl</message-listener>-->
+<!--        </message-listeners>-->
+<!--    </topic>-->
+<!--    <queue name="queue">-->
+<!--        <max-size>40000</max-size>-->
+<!--    </queue>-->
     <map name="__vertx.haInfo">
         <backup-count>0</backup-count>
     </map>
 
-    <set name="badTraceIds">
-        <statistics-enabled>false</statistics-enabled>
-        <backup-count>0</backup-count>
-        <async-backup-count>0</async-backup-count>
-        <split-brain-protection-ref>splitbrainprotection-name</split-brain-protection-ref>
-    </set>
+<!--    <set name="badTraceIds">-->
+<!--        <statistics-enabled>false</statistics-enabled>-->
+<!--        <backup-count>0</backup-count>-->
+<!--        <async-backup-count>0</async-backup-count>-->
+<!--        <split-brain-protection-ref>splitbrainprotection-name</split-brain-protection-ref>-->
+<!--    </set>-->
     <map name="__vertx.nodeInfo">
         <backup-count>0</backup-count>
     </map>
