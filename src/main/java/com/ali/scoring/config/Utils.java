@@ -77,4 +77,13 @@ public class Utils {
             return null;
         }
     }
+
+    public static String getWrongPath() {
+        String port = System.getProperty("server.port", "8080");
+        if ("8000".equals(port)) {
+            return "getWrongTrace8001";
+        } else {
+            return "getWrongTrace8000";
+        }
+    }
 }

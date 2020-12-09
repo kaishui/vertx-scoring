@@ -10,6 +10,7 @@ import io.vertx.core.Vertx;
 import io.vertx.core.impl.logging.Logger;
 import io.vertx.core.impl.logging.LoggerFactory;
 import io.vertx.core.json.Json;
+import io.vertx.core.json.JsonArray;
 import io.vertx.core.json.JsonObject;
 
 import java.net.URI;
@@ -53,46 +54,31 @@ public class CheckSumService implements Runnable {
         });
     }
 
-    public void getBadTraceMD5(JsonObject traceIdBatch) {
-        int batchPos = traceIdBatch.getInteger("batchPos");
-        Future<Map<String, List<String>>> future = Future.future(promise -> {
-            getWrongTrace(traceIdBatch.getJsonArray("badTraceIdList").getList(), Constants.CLIENT_PROCESS_PORT1, batchPos, promise);
+    public void getBadTraceMD5(JsonObject traceIdBatchJson) {
+        JsonObject traceIdBatchMap = traceIdBatchJson.getJsonObject("badTraceRecords");
+        traceIdBatchMap.stream().iterator().forEachRemaining(entry ->{
+            String traceId = entry.getKey();
+            List<String> spanSet = ((JsonArray) entry.getValue()).getList();
+            // order span with startTime
+            String spans = spanSet.stream().sorted(
+                    Comparator.comparing(CheckSumService::getStartTime)).collect(Collectors.joining("\n"));
+            spans = spans + "\n";
+            // output all span to check
+            LOGGER.info("TRACE_CHUCKSUM_MAP traceId:" + traceId);
+            TRACE_CHUCKSUM_MAP.put(traceId, Utils.MD5(spans));
         });
-
-        Future<Map<String, List<String>>> future1 = Future.future(promise -> {
-            getWrongTrace(traceIdBatch.getJsonArray("badTraceIdList").getList(), Constants.CLIENT_PROCESS_PORT2, batchPos, promise);
-        });
-        CompositeFuture.all(future1, future).onSuccess(handler -> {
-            Map<String, List<String>> result1 = handler.resultAt(0);
-            Map<String, List<String>> result2 = handler.resultAt(1);
-            Map<String, Set<String>> map = new HashMap<>();
-            mergeTraceDatas(map, result1);
-            mergeTraceDatas(map, result2);
-            for (Map.Entry<String, Set<String>> entry : map.entrySet()) {
-                String traceId = entry.getKey();
-                Set<String> spanSet = entry.getValue();
-                // order span with startTime
-                String spans = spanSet.stream().sorted(
-                        Comparator.comparing(CheckSumService::getStartTime)).collect(Collectors.joining("\n"));
-                spans = spans + "\n";
-                // output all span to check
-                LOGGER.info("TRACE_CHUCKSUM_MAP traceId:" + traceId);
-                TRACE_CHUCKSUM_MAP.put(traceId, Utils.MD5(spans));
+        if (traceIdBatchJson.getBoolean("isLastUpdate")) {
+            if (FINISH_COUNT.incrementAndGet() >= Constants.PROCESS_COUNT) {
+                vertx.eventBus().send("sendCheckSum", new JsonObject());
             }
-
-            if (traceIdBatch.getBoolean("isLastUpdate")) {
-                if (FINISH_COUNT.incrementAndGet() >= Constants.PROCESS_COUNT) {
-                    vertx.eventBus().send("sendCheckSum", new JsonObject());
-                }
-            }
-        });
+        }
     }
 
-    private void mergeTraceDatas(Map<String, Set<String>> result, Map<String, List<String>> toMerge) {
+    public static void mergeTraceDatas(Map<String, List<String>> result, Map<String, List<String>> toMerge) {
         LOGGER.debug("mergeTraceDatas: " + Json.encode(toMerge));
         for (Map.Entry<String, List<String>> entry : toMerge.entrySet()) {
             String traceId = entry.getKey();
-            Set<String> spanSet = result.computeIfAbsent(traceId, k -> new HashSet<>());
+            List<String> spanSet = result.computeIfAbsent(traceId, k -> new ArrayList<>());
             spanSet.addAll(entry.getValue());
         }
     }

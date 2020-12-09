@@ -1,10 +1,14 @@
 package com.ali.scoring.service;
 
 import com.ali.scoring.config.Constants;
+import com.ali.scoring.config.Utils;
 import com.ali.scoring.controller.CommonController;
+import io.netty.util.internal.StringUtil;
+import io.vertx.core.Promise;
 import io.vertx.core.Vertx;
 import io.vertx.core.impl.logging.Logger;
 import io.vertx.core.impl.logging.LoggerFactory;
+import io.vertx.core.json.Json;
 import io.vertx.core.json.JsonObject;
 
 import java.net.URI;
@@ -27,9 +31,15 @@ public class TraceDataService implements Runnable {
         this.vertx = vertx;
     }
 
-    // an list of trace map,like ring buffe.  key is traceId, value is spans ,  r
+    // an list of trace map,like ring buffe.  key is traceId, value is spans
     private static List<Map<String, List<String>>> BATCH_TRACE_LIST = new ArrayList<>();
 
+//    //6w TODO 1
+//    Multimap<String, String> traceRecords = ArrayListMultimap.create();
+//    //batch bad traceIds
+//    Map<Integer, Set<String>> keyPairs = new ConcurrentHashMap<>();
+
+    //TODO SOLUTION 2
 //    // list<timestamp, lines>
 //    List<Map<Long, List<String>>> TIME_TRACE_LIST = new ArrayList<>();
 //
@@ -64,7 +74,7 @@ public class TraceDataService implements Runnable {
         if ("8000".equals(port) || "8001".equals(port)) {
             long startTime = System.nanoTime();
             try {
-                Set<String> badTraceIds = new HashSet<>(1000);
+                Set<String> badTraceIds = new HashSet<>(100);
 
                 //call http api to get trace data
                 HttpRequest request = HttpRequest.newBuilder().uri(URI.create(getPath())).GET().build();
@@ -104,15 +114,14 @@ public class TraceDataService implements Runnable {
                         }
                         // batchPos begin from 0, so need to minus 1
                         int batchPos = (int) (count.get() / Constants.BATCH_SIZE) - 1;
-                        updateWrongTraceId(badTraceIds, batchPos, false);
-
+                        getAnotherPartBadTraceData(badTraceIds, batchPos, false);
                         logger.info("suc to updateBadTraceId, badTraceIds size:" + badTraceSize.addAndGet(badTraceIds.size()) + " batchPos:" + batchPos);
                         badTraceIds.clear();
                     }
                 });
 
                 //剩下的batch update
-                updateWrongTraceId(badTraceIds, (int) (count.get() / Constants.BATCH_SIZE) - 1, true);
+                getAnotherPartBadTraceData(badTraceIds, (int) (count.get() / Constants.BATCH_SIZE) - 1, true);
                 logger.info("suc to updateBadTraceId, badTraceIds size:" + badTraceSize.addAndGet(badTraceIds.size()));
             } catch (Exception e) {
 
@@ -121,6 +130,19 @@ public class TraceDataService implements Runnable {
                 logger.debug("time:" + (endTime - startTime));
             }
         }
+    }
+
+    private void getAnotherPartBadTraceData(Set<String> badTraceIds, int batchPos, boolean isLastUpdate) {
+        Set<String> badIds = new HashSet<>(badTraceIds);
+        io.vertx.core.Future<Map<String, List<String>>> future = io.vertx.core.Future.future(promise -> {
+            updateWrongTraceId(badIds, batchPos, false, promise);
+        });
+        future.onSuccess(result ->{
+            JsonObject params = new JsonObject();
+            params.put("isLastUpdate", isLastUpdate).put("badTraceRecords", result);
+            //GET BAD TRACE MD5
+            vertx.eventBus().send("getMD5", params);
+        });
     }
 
 
@@ -166,22 +188,37 @@ public class TraceDataService implements Runnable {
 
     /**
      * call backend controller to update wrong tradeId list.
-     *
-     * @param badTraceIdList
+     *  @param badTraceIdList
      * @param batchPos
+     * @param promise
      */
-    private void updateWrongTraceId(Set<String> badTraceIdList, int batchPos, boolean isLastUpdate) {
+    private void updateWrongTraceId(Set<String> badTraceIdList, int batchPos, boolean isLastUpdate, Promise<Map<String, List<String>>> promise) {
         if (badTraceIdList.size() > 0) {
+
             logger.debug("updateWrongTraceId: " + badTraceIdList.size());
             JsonObject jsonBody = new JsonObject();
             jsonBody.put("badTraceIdList", new ArrayList<>(badTraceIdList));
             jsonBody.put("batchPos", batchPos);
-            jsonBody.put("isLastUpdate", isLastUpdate);
 
-            //GET BAD TRACE MD5
-            vertx.eventBus().send("getMD5", jsonBody);
+            //batch 1
+            Map<String, List<String>> result1 = getWrongTracing(new ArrayList<>(badTraceIdList), batchPos);
 
-
+            io.vertx.core.Future<Map<String, List<String>>> future = io.vertx.core.Future.future(getAnotherDataPromise -> {
+                //batch 2 trace data
+                vertx.eventBus().request(Utils.getWrongPath(), jsonBody, handler -> {
+                    if (handler.succeeded()) {
+                        String result = (String) handler.result().body();
+                        Map<String, List<String>> resultMap = Json.decodeValue(result, Map.class);
+                        getAnotherDataPromise.complete(resultMap);
+                    } else {
+                        getAnotherDataPromise.complete(new ConcurrentHashMap<>());
+                    }
+                });
+            });
+            future.onSuccess(value ->{
+                CheckSumService.mergeTraceDatas(result1, value);
+                promise.complete(result1);
+            });
         }
     }
 
