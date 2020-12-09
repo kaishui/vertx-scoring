@@ -4,7 +4,9 @@ package com.ali.scoring.service;
 import com.ali.scoring.config.Constants;
 import com.ali.scoring.config.Utils;
 import com.hazelcast.cp.IAtomicLong;
-import com.hazelcast.map.IMap;
+import io.vertx.core.CompositeFuture;
+import io.vertx.core.Future;
+import io.vertx.core.Promise;
 import io.vertx.core.Vertx;
 import io.vertx.core.impl.logging.Logger;
 import io.vertx.core.impl.logging.LoggerFactory;
@@ -41,55 +43,58 @@ public class CheckSumService implements Runnable {
     public void run() {
         //get md5 for each batch
         vertx.eventBus().consumer("getMD5", consumer -> {
-            IAtomicLong atomicLongConsumer = VertxInstanceService.getInstance(vertx).getCPSubsystem().getAtomicLong("consumer");
-            atomicLongConsumer.getAndIncrement();
             getBadTraceMD5((JsonObject) consumer.body());
-            consumer.reply(new JsonObject().put("result", "suc"));
         });
 
+
         vertx.eventBus().consumer("sendCheckSum", consumer -> {
-            IAtomicLong atomicLongConsumer = VertxInstanceService.getInstance(vertx).getCPSubsystem().getAtomicLong("consumer");
-            IAtomicLong atomicLongSender = VertxInstanceService.getInstance(vertx).getCPSubsystem().getAtomicLong("sender");
-            if (atomicLongConsumer.get() == atomicLongSender.get()) {
-                sendCheckSum();
-            }
+            sendCheckSum();
         });
     }
 
     public void getBadTraceMD5(JsonObject traceIdBatch) {
-
-        Map<String, Set<String>> map = new HashMap<>();
-        String[] ports = new String[]{Constants.CLIENT_PROCESS_PORT1, Constants.CLIENT_PROCESS_PORT2};
-
-        // if (traceIdBatch.getTraceIdList().size() > 0) {
         int batchPos = traceIdBatch.getInteger("batchPos");
+        Future<Map<String, List<String>>> future = Future.future(promise -> {
+            getWrongTrace(traceIdBatch.getJsonArray("badTraceIdList").getList(), Constants.CLIENT_PROCESS_PORT1, batchPos, promise);
+        });
 
-        // to get all spans from remote
-        for (String port : ports) {
-            Map<String, List<String>> processMap = getWrongTrace(traceIdBatch.getJsonArray("badTraceIdList").getList(), port, batchPos);
-            if (processMap != null) {
-                for (Map.Entry<String, List<String>> entry : processMap.entrySet()) {
-                    String traceId = entry.getKey();
-                    Set<String> spanSet = map.computeIfAbsent(traceId, k -> new HashSet<>());
-                    spanSet.addAll(entry.getValue());
+        Future<Map<String, List<String>>> future1 = Future.future(promise -> {
+            getWrongTrace(traceIdBatch.getJsonArray("badTraceIdList").getList(), Constants.CLIENT_PROCESS_PORT2, batchPos, promise);
+        });
+        CompositeFuture.all(future1, future).onSuccess(handler -> {
+            Map<String, List<String>> result1 = handler.resultAt(0);
+            Map<String, List<String>> result2 = handler.resultAt(1);
+            Map<String, Set<String>> map = new HashMap<>();
+            mergeTraceDatas(map, result1);
+            mergeTraceDatas(map, result2);
+            for (Map.Entry<String, Set<String>> entry : map.entrySet()) {
+                String traceId = entry.getKey();
+                Set<String> spanSet = entry.getValue();
+                // order span with startTime
+                String spans = spanSet.stream().sorted(
+                        Comparator.comparing(CheckSumService::getStartTime)).collect(Collectors.joining("\n"));
+                spans = spans + "\n";
+                // output all span to check
+                LOGGER.info("TRACE_CHUCKSUM_MAP traceId:" + traceId);
+                TRACE_CHUCKSUM_MAP.put(traceId, Utils.MD5(spans));
+            }
+
+            if (traceIdBatch.getBoolean("isLastUpdate")) {
+                IAtomicLong atomicLongSender = VertxInstanceService.getInstance(vertx).getCPSubsystem().getAtomicLong("sender");
+                if (atomicLongSender.incrementAndGet() >= Constants.PROCESS_COUNT) {
+                    vertx.eventBus().send("sendCheckSum", new JsonObject());
                 }
             }
-        }
+        });
+    }
 
-        for (Map.Entry<String, Set<String>> entry : map.entrySet()) {
+    private void mergeTraceDatas(Map<String, Set<String>> result, Map<String, List<String>> toMerge) {
+        LOGGER.debug("mergeTraceDatas: " + Json.encode(toMerge));
+        for (Map.Entry<String, List<String>> entry : toMerge.entrySet()) {
             String traceId = entry.getKey();
-            Set<String> spanSet = entry.getValue();
-            // order span with startTime
-            String spans = spanSet.stream().sorted(
-                    Comparator.comparing(CheckSumService::getStartTime)).collect(Collectors.joining("\n"));
-            spans = spans + "\n";
-            // output all span to check
-            // LOGGER.info("traceId:" + traceId + ",value:\n" + spans);
-            IMap<Object, Object> checkSumMap = VertxInstanceService.getInstance(vertx).getMap("checkSumMap");
-            checkSumMap.put(traceId, Utils.MD5(spans));
+            Set<String> spanSet = result.computeIfAbsent(traceId, k -> new HashSet<>());
+            spanSet.addAll(entry.getValue());
         }
-
-       vertx.eventBus().send("sendCheckSum", new JsonObject());
     }
 
     /**
@@ -98,39 +103,23 @@ public class CheckSumService implements Runnable {
      * @param traceIdList
      * @param port
      * @param batchPos
+     * @param promise
      * @return
      */
-    private Map<String, List<String>> getWrongTrace(List<String> traceIdList, String port, int batchPos) {
+    private void getWrongTrace(List<String> traceIdList, String port, int batchPos, Promise<Map<String, List<String>>> promise) {
         JsonObject jsonBody = new JsonObject();
         jsonBody.put("badTraceIdList", traceIdList).put("batchPos", batchPos);
-        //call http api to get trace data
-        HttpRequest.BodyPublisher body = HttpRequest.BodyPublishers.ofString(jsonBody.encode());
 
-        String url = String.format("http://localhost:%s/getWrongTrace", port);
+        vertx.eventBus().request("getWrongTrace" + port, jsonBody, handler -> {
+            Map<String, List<String>> result = Json.decodeValue((String) handler.result().body(), Map.class);
+            promise.complete(result);
+        });
 
-        HttpRequest request = HttpRequest.newBuilder().uri(URI.create(url))
-                .POST(body).build();
-        //outputstream with lines
-        HttpResponse.BodyHandler<String> bodyHandler = HttpResponse.BodyHandlers.ofString();
-        HttpClient client = HttpClient.newHttpClient();
-        HttpResponse<String> res = null;
-        try {
-            res = client.send(request, bodyHandler);
-        } catch (Exception e) {
-            LOGGER.error("getWrongTrace exception", e);
-        }
-        if (res != null && res.statusCode() == 200) {
-            Map<String, List<String>> map = Json.decodeValue(res.body(), Map.class);
-            return map;
-        }
-        return null;
     }
 
 
     private boolean sendCheckSum() {
-        IMap<Object, Object> checkSumMap = VertxInstanceService.getInstance(vertx).getMap("checkSumMap");
-
-        String result = Json.encode(checkSumMap);
+        String result = Json.encode(TRACE_CHUCKSUM_MAP);
         StringBuffer params = new StringBuffer().append("result=").append(result);
         LOGGER.debug("params: " + params);
         //call http api to get trace data

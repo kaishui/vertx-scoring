@@ -2,12 +2,9 @@ package com.ali.scoring.service;
 
 import com.ali.scoring.config.Constants;
 import com.ali.scoring.controller.CommonController;
-import com.hazelcast.cp.IAtomicLong;
-import io.vertx.core.Handler;
 import io.vertx.core.Vertx;
 import io.vertx.core.impl.logging.Logger;
 import io.vertx.core.impl.logging.LoggerFactory;
-import io.vertx.core.json.Json;
 import io.vertx.core.json.JsonObject;
 
 import java.net.URI;
@@ -15,6 +12,7 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.util.*;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
@@ -31,8 +29,19 @@ public class TraceDataService implements Runnable {
 
     // an list of trace map,like ring buffe.  key is traceId, value is spans ,  r
     private static List<Map<String, List<String>>> BATCH_TRACE_LIST = new ArrayList<>();
+
+//    // list<timestamp, lines>
+//    List<Map<Long, List<String>>> TIME_TRACE_LIST = new ArrayList<>();
+//
+//    // list<timestamp, traceIds>
+//    List<Map<Long, List<String>>> TIME_TRACEID_LIST = new ArrayList<>);
+//    //动态调整 trace timestamp index
+//    List<Long> badTraceTimestamps = new ArrayList<>();
+
+
+
     // make 15 bucket to cache traceData
-    private static int BATCH_COUNT = 100;
+    private static int BATCH_COUNT = 150;
 
     private static AtomicInteger badTraceSize = new AtomicInteger(0);
 
@@ -89,14 +98,13 @@ public class TraceDataService implements Runnable {
 
                     // 20K 数据一个Batch
                     if (count.get() % Constants.BATCH_SIZE == 0) {
-                        pos.addAndGet(1);
                         // loop cycle
-                        if (pos.get() >= BATCH_COUNT) {
+                        if (pos.incrementAndGet() >= BATCH_COUNT) {
                             pos.set(0);
                         }
                         // batchPos begin from 0, so need to minus 1
                         int batchPos = (int) (count.get() / Constants.BATCH_SIZE) - 1;
-                        updateWrongTraceId(badTraceIds, batchPos);
+                        updateWrongTraceId(badTraceIds, batchPos, false);
 
                         logger.info("suc to updateBadTraceId, badTraceIds size:" + badTraceSize.addAndGet(badTraceIds.size()) + " batchPos:" + batchPos);
                         badTraceIds.clear();
@@ -104,7 +112,7 @@ public class TraceDataService implements Runnable {
                 });
 
                 //剩下的batch update
-                updateWrongTraceId(badTraceIds, (int) (count.get() / Constants.BATCH_SIZE) - 1);
+                updateWrongTraceId(badTraceIds, (int) (count.get() / Constants.BATCH_SIZE) - 1, true);
                 logger.info("suc to updateBadTraceId, badTraceIds size:" + badTraceSize.addAndGet(badTraceIds.size()));
             } catch (Exception e) {
 
@@ -116,7 +124,7 @@ public class TraceDataService implements Runnable {
     }
 
 
-    public static String getWrongTracing(List<String> traceIdList, int batchPos) {
+    public static Map<String, List<String>> getWrongTracing(List<String> traceIdList, int batchPos) {
         Map<String, List<String>> wrongTraceMap = new HashMap<>();
         int pos = batchPos % BATCH_COUNT;
         int previous = pos - 1;
@@ -130,9 +138,13 @@ public class TraceDataService implements Runnable {
         getWrongTraceWithBatch(previous, pos, traceIdList, wrongTraceMap);
         getWrongTraceWithBatch(pos, pos, traceIdList, wrongTraceMap);
         getWrongTraceWithBatch(next, pos, traceIdList, wrongTraceMap);
-        // to clear spans, don't block client process thread. TODO to use lock/notify
-        BATCH_TRACE_LIST.get(previous).clear();
-        return Json.encode(wrongTraceMap);
+        // to clear spans, don't block client pess thread. TODO to use lock/notify
+        CompletableFuture<Integer> future = CompletableFuture.completedFuture(previous);
+        future.whenComplete((index, ex) ->{
+            BATCH_TRACE_LIST.get(index).clear();
+        });
+        logger.debug("wrongTraceMap result:" + wrongTraceMap.size());
+        return wrongTraceMap;
     }
 
     private static void getWrongTraceWithBatch(int batchPos, int pos, List<String> traceIdList, Map<String, List<String>> wrongTraceMap) {
@@ -158,19 +170,16 @@ public class TraceDataService implements Runnable {
      * @param badTraceIdList
      * @param batchPos
      */
-    private void updateWrongTraceId(Set<String> badTraceIdList, int batchPos) {
+    private void updateWrongTraceId(Set<String> badTraceIdList, int batchPos, boolean isLastUpdate) {
         if (badTraceIdList.size() > 0) {
             logger.debug("updateWrongTraceId: " + badTraceIdList.size());
-            IAtomicLong atomicLong = VertxInstanceService.getInstance(vertx).getCPSubsystem().getAtomicLong("sender");
-            logger.debug("sender:" + atomicLong.getAndIncrement());
             JsonObject jsonBody = new JsonObject();
             jsonBody.put("badTraceIdList", new ArrayList<>(badTraceIdList));
             jsonBody.put("batchPos", batchPos);
+            jsonBody.put("isLastUpdate", isLastUpdate);
 
             //GET BAD TRACE MD5
-            vertx.eventBus().request("getMD5", jsonBody, handler ->{
-                logger.info("getMD5 result:" + handler.succeeded());
-            });
+            vertx.eventBus().send("getMD5", jsonBody);
 
 
         }
@@ -180,10 +189,8 @@ public class TraceDataService implements Runnable {
         String port = System.getProperty("server.port", "8080");
         if ("8000".equals(port)) {
             return "http://localhost:" + CommonController.getDataSourcePort() + "/trace1.data";
-//            return "/trace1.data";
         } else if ("8001".equals(port)) {
             return "http://localhost:" + CommonController.getDataSourcePort() + "/trace2.data";
-//            return "/trace2.data";
         } else {
             return null;
         }

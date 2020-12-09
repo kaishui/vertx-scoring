@@ -31,7 +31,6 @@ public class Application {
         Vertx.clusteredVertx(options, res -> {
             if (res.succeeded()) {
                 Vertx vertx = res.result();
-                VertxInstanceService.setVertx(vertx);
                 vertx.deployVerticle(new MainVerticle());
             } else {
                 // failed!
