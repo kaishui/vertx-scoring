@@ -2,8 +2,6 @@ package com.ali.scoring.service;
 
 import com.ali.scoring.config.Constants;
 import com.ali.scoring.controller.CommonController;
-import com.hazelcast.cp.IAtomicLong;
-import io.vertx.core.Handler;
 import io.vertx.core.Vertx;
 import io.vertx.core.impl.logging.Logger;
 import io.vertx.core.impl.logging.LoggerFactory;
@@ -96,7 +94,7 @@ public class TraceDataService implements Runnable {
                         }
                         // batchPos begin from 0, so need to minus 1
                         int batchPos = (int) (count.get() / Constants.BATCH_SIZE) - 1;
-                        updateWrongTraceId(badTraceIds, batchPos);
+                        updateWrongTraceId(badTraceIds, batchPos, false);
 
                         logger.info("suc to updateBadTraceId, badTraceIds size:" + badTraceSize.addAndGet(badTraceIds.size()) + " batchPos:" + batchPos);
                         badTraceIds.clear();
@@ -104,7 +102,7 @@ public class TraceDataService implements Runnable {
                 });
 
                 //剩下的batch update
-                updateWrongTraceId(badTraceIds, (int) (count.get() / Constants.BATCH_SIZE) - 1);
+                updateWrongTraceId(badTraceIds, (int) (count.get() / Constants.BATCH_SIZE) - 1, true);
                 logger.info("suc to updateBadTraceId, badTraceIds size:" + badTraceSize.addAndGet(badTraceIds.size()));
             } catch (Exception e) {
 
@@ -154,25 +152,23 @@ public class TraceDataService implements Runnable {
 
     /**
      * call backend controller to update wrong tradeId list.
-     *
-     * @param badTraceIdList
+     *  @param badTraceIdList
      * @param batchPos
+     * @param isLastUpdate
      */
-    private void updateWrongTraceId(Set<String> badTraceIdList, int batchPos) {
+    private void updateWrongTraceId(Set<String> badTraceIdList, int batchPos, boolean isLastUpdate) {
         if (badTraceIdList.size() > 0) {
             logger.debug("updateWrongTraceId: " + badTraceIdList.size());
-            IAtomicLong atomicLong = VertxInstanceService.getInstance(vertx).getCPSubsystem().getAtomicLong("sender");
-            logger.debug("sender:" + atomicLong.getAndIncrement());
+
             JsonObject jsonBody = new JsonObject();
             jsonBody.put("badTraceIdList", new ArrayList<>(badTraceIdList));
             jsonBody.put("batchPos", batchPos);
+            jsonBody.put("isLastUpdate", isLastUpdate);
 
             //GET BAD TRACE MD5
             vertx.eventBus().request("getMD5", jsonBody, handler ->{
                 logger.info("getMD5 result:" + handler.succeeded());
             });
-
-
         }
     }
 

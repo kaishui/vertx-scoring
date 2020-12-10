@@ -20,12 +20,12 @@
 
     <!-- Logger levels: trace, debug, info, warn, error, fatal -->
     <Loggers>        <!--name 是你需要打log的包名-->
-        <AsyncLogger name="com.ali.scoring" level="DEBUG" additivity="false" includeLocation="true">
+        <AsyncLogger name="com.ali.scoring" level="error" additivity="false" includeLocation="true">
             <AppenderRef ref="Console" />
             <!--<appender-ref ref="FILE" />-->
         </AsyncLogger>
 
-        <Root level="DEBUG">
+        <Root level="error">
             <AppenderRef ref="Console"/>
         </Root>
     </Loggers>

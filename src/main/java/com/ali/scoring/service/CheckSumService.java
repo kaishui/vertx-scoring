@@ -16,7 +16,6 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.util.*;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Collectors;
 
 
@@ -25,7 +24,6 @@ public class CheckSumService implements Runnable {
 
 
     // save chuckSum for the total wrong trace
-    private static Map<String, String> TRACE_CHUCKSUM_MAP = new ConcurrentHashMap<>();
     private final Vertx vertx;
 
     public CheckSumService(Vertx vertx) {
@@ -41,18 +39,12 @@ public class CheckSumService implements Runnable {
     public void run() {
         //get md5 for each batch
         vertx.eventBus().consumer("getMD5", consumer -> {
-            IAtomicLong atomicLongConsumer = VertxInstanceService.getInstance(vertx).getCPSubsystem().getAtomicLong("consumer");
-            atomicLongConsumer.getAndIncrement();
             getBadTraceMD5((JsonObject) consumer.body());
             consumer.reply(new JsonObject().put("result", "suc"));
         });
 
         vertx.eventBus().consumer("sendCheckSum", consumer -> {
-            IAtomicLong atomicLongConsumer = VertxInstanceService.getInstance(vertx).getCPSubsystem().getAtomicLong("consumer");
-            IAtomicLong atomicLongSender = VertxInstanceService.getInstance(vertx).getCPSubsystem().getAtomicLong("sender");
-            if (atomicLongConsumer.get() == atomicLongSender.get()) {
-                sendCheckSum();
-            }
+            sendCheckSum();
         });
     }
 
@@ -89,7 +81,13 @@ public class CheckSumService implements Runnable {
             checkSumMap.put(traceId, Utils.MD5(spans));
         }
 
-       vertx.eventBus().send("sendCheckSum", new JsonObject());
+        if (traceIdBatch.getBoolean("isLastUpdate")) {
+            IAtomicLong atomicLong = VertxInstanceService.getInstance(vertx).getCPSubsystem().getAtomicLong("sender");
+            if (atomicLong.incrementAndGet() >= 2) {
+                vertx.eventBus().send("sendCheckSum", new JsonObject());
+            }
+        }
+
     }
 
     /**
