@@ -54,3 +54,11 @@ java -Dserver.port=8080 -DcheckSumPath=/software/workspace/aliyun/demo/checkSum.
 -Dserver.port=8001 -XX:+UnlockExperimentalVMOptions -XX:+UseZGC -Xmx4G -Xms3G -XX:NewRatio=9 -XX:GCTimeRatio=99
 ```
 ![statup](./src/test/resources/images/startup.png)
+
+## docker tag
+```
+docker build -t vertx-scoring:1.0 .
+docker tag  vertx-scoring:1.0 registry.cn-hangzhou.aliyuncs.com/jiulong/vertx-scoring:3.0
+docker push registry.cn-hangzhou.aliyuncs.com/jiulong/vertx-scoring:3.0
+
+```

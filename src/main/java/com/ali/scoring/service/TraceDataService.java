@@ -51,7 +51,7 @@ public class TraceDataService implements Runnable {
 
 
     // make 15 bucket to cache traceData
-    private static int BATCH_COUNT = 150;
+    private static int BATCH_COUNT = 20;
 
     private static AtomicInteger badTraceSize = new AtomicInteger(0);
 
@@ -72,7 +72,6 @@ public class TraceDataService implements Runnable {
         //load data
         String port = System.getProperty("server.port", "8080");
         if ("8000".equals(port) || "8001".equals(port)) {
-            long startTime = System.nanoTime();
             try {
                 Set<String> badTraceIds = new HashSet<>(100);
 
@@ -125,9 +124,6 @@ public class TraceDataService implements Runnable {
                 logger.info("suc to updateBadTraceId, badTraceIds size:" + badTraceSize.addAndGet(badTraceIds.size()));
             } catch (Exception e) {
 
-            } finally {
-                long endTime = System.nanoTime();
-                logger.debug("time:" + (endTime - startTime));
             }
         }
     }
@@ -211,6 +207,7 @@ public class TraceDataService implements Runnable {
                         Map<String, List<String>> resultMap = Json.decodeValue(result, Map.class);
                         getAnotherDataPromise.complete(resultMap);
                     } else {
+                        logger.warn("get another trace data failed");
                         getAnotherDataPromise.complete(new ConcurrentHashMap<>());
                     }
                 });
